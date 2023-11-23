@@ -8,21 +8,58 @@ import flask
 from flask import request
 import arrow  # Replacement for datetime, based on moment.js
 import acp_times  # Brevet time calculations
-import config
-from mongo_brevets import insert_brevet, get_brevet
 
 import logging
 import os
+import requests # The library we use to send requests to the API
 
-###
-# Pages
-###
 
-###
-# Globals
-###
+# Set up Flask app
 app = flask.Flask(__name__)
-CONFIG = config.configuration()
+app.debug = True if "DEBUG" not in os.environ else os.environ["DEBUG"]
+port_num = True if "PORT" not in os.environ else os.environ["PORT"]
+app.logger.setLevel(logging.DEBUG)
+
+##################################################
+################### API Callers ################## 
+##################################################
+
+API_ADDR = os.environ["API_ADDR"]
+API_PORT = os.environ["API_PORT"]
+API_URL = f"http://{API_ADDR}:{API_PORT}/api/"
+
+
+def get_brevet():
+    """
+    Obtains the newest document in the "lists" collection in database
+    by calling the RESTful API.
+
+    Returns title (string) and items (list of dictionaries) as a tuple.
+    """
+    # Get documents (rows) in our collection (table),
+    # Sort by primary key in descending order and limit to 1 document (row)
+    # This will translate into finding the newest inserted document.
+
+    lists = requests.get(f"{API_URL}brevets").json()
+
+    # lists should be a list of dictionaries.
+    # we just need the last one:
+    brevet = lists[-1]
+    return brevet["items"], brevet["start_time"], brevet["brevet_dist_km"]
+    
+def insert_brevet(items, start_time, brevet_dist_km):
+    """
+    Inserts a new brevet into the database by calling the API.
+    
+    Inputs a title (string) and items (list of dictionaries)
+    """
+    _id = requests.post(f"{API_URL}brevets", json={"items": items, "start_time": start_time, "brevet_dist_km": brevet_dist_km}).json()
+    return _id
+
+##################################################
+################## Flask routes ################## 
+##################################################
+
 
 @app.route("/")
 @app.route("/index")
@@ -74,13 +111,13 @@ def insert():
         # This will fail if the request body is NOT a JSON.
         input_json = request.json
         # if successful, input_json is automatically parsed into a python dictionary!
-        
         # Because input_json is a dictionary, we can do this:
         items = input_json["items"]
         start_time = input_json["start_time"]
         brevet_dist_km = input_json["brevet_dist_km"]
 
         brevet_id = insert_brevet(items, start_time, brevet_dist_km)
+        app.logger.debug(brevet_id)
 
         return flask.jsonify(result={},
                         message="Inserted!", 
@@ -118,12 +155,10 @@ def fetch():
                 status=0,
                 message="Something went wrong, couldn't fetch any brevets!")
 
-#############
 
-app.debug = CONFIG.DEBUG
-if app.debug:
-    app.logger.setLevel(logging.DEBUG)
+##################################################
+################# Start Flask App ################ 
+##################################################
 
 if __name__ == "__main__":
-    print("Opening for global access on port {}".format(CONFIG.PORT))
-    app.run(port=CONFIG.PORT, host="0.0.0.0")
+    app.run(port=port_num, host="0.0.0.0")
